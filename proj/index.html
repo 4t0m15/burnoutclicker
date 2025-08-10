@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Emoji → Sound</title>
+    <style>
+      :root {
+        --bg: #0f1220;
+        --panel: #171a2b;
+        --text: #e8e9ef;
+        --muted: #a9adc1;
+        --accent: #6ea8fe;
+        --accent-2: #37d6a9;
+        --border: #2a2e45;
+        --danger: #ff6b6b;
+      }
+
+      html, body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        background: radial-gradient(1000px 600px at 10% 0%, #151936 0%, var(--bg) 40%),
+                    radial-gradient(1200px 800px at 90% 100%, #122233 0%, var(--bg) 40%),
+                    var(--bg);
+        color: var(--text);
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+
+      .card {
+        width: min(720px, 100%);
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.0));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 20px 18px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      }
+
+      h1 {
+        font-size: 20px;
+        margin: 0 0 14px;
+        letter-spacing: 0.3px;
+      }
+
+      .hint {
+        color: var(--muted);
+        font-size: 13px;
+        margin-bottom: 16px;
+      }
+
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+
+      input[type="text"] {
+        flex: 1 1 auto;
+        background: var(--panel);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px 12px;
+        font-size: 16px;
+        outline: none;
+        transition: border-color 140ms ease;
+      }
+      input[type="text"]:focus {
+        border-color: var(--accent);
+      }
+
+      button {
+        appearance: none;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, #1a1e34, #121528);
+        color: var(--text);
+        border-radius: 10px;
+        padding: 12px 14px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: transform 70ms ease, border-color 140ms ease, background 160ms ease;
+      }
+      button:hover {
+        transform: translateY(-1px);
+        border-color: #394067;
+      }
+      button.primary {
+        background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 22%, #000), #1c223a);
+        border-color: color-mix(in oklab, var(--accent) 50%, var(--border));
+      }
+      button.go {
+        background: linear-gradient(180deg, color-mix(in oklab, var(--accent-2) 22%, #000), #1a2c2a);
+        border-color: color-mix(in oklab, var(--accent-2) 50%, var(--border));
+      }
+      button.danger { border-color: color-mix(in oklab, var(--danger) 40%, var(--border)); }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .meta {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        color: var(--muted);
+        font-size: 13px;
+        margin-top: 10px;
+      }
+      .spacer { flex: 1; }
+
+      .bar {
+        height: 6px;
+        width: 100%;
+        background: #121528;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        overflow: hidden;
+        margin-top: 12px;
+      }
+      .bar > .fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        transition: width 120ms linear;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Emoji → Sound</h1>
+      <div class="hint">Type some emojis, generate a tone sequence parsed from them, then press Play.</div>
+      <div class="row">
+        <input id="emojiInput" type="text" placeholder="e.g. 😀🎵🔥🌈✨" aria-label="Emoji input" />
+        <button id="generateBtn" class="primary" title="Generate from emojis">Generate</button>
+      </div>
+      <div class="row">
+        <button id="playBtn" class="go" disabled title="Play the generated sequence">Play</button>
+        <button id="stopBtn" class="danger" disabled title="Stop playback">Stop</button>
+        <button id="testBtn" title="Play a short test tone">Test</button>
+        <div class="spacer"></div>
+        <label for="volumeSlider" class="hint" style="min-width:38px">Vol</label>
+        <input id="volumeSlider" type="range" min="0" max="100" value="85" step="1" title="Master volume" style="width:140px" />
+        <span id="noteCount" class="hint">0 notes</span>
+      </div>
+      <div class="bar" aria-hidden="true"><div id="progressFill" class="fill"></div></div>
+      <div class="meta">
+        <span id="statusText">Idle</span>
+        <div class="spacer"></div>
+        <span>Simple sinewave synth • deterministic by emoji</span>
+      </div>
+    </div>
+
+    <script>
+      // Utilities
+      function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+
+      function segmentGraphemes(input) {
+        if (!input) return [];
+        try {
+          if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+            const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+            return Array.from(seg.segment(input), s => s.segment);
+          }
+        } catch (e) { /* ignore */ }
+        // Fallback: by code points. Not perfect for ZWJ emoji, but adequate.
+        return Array.from(input);
+      }
+
+      function hashStringToSeed(text) {
+        // 32-bit FNV-1a
+        let hash = 0x811c9dc5;
+        for (const ch of text) {
+          const code = ch.codePointAt(0) || 0;
+          hash ^= code;
+          hash = Math.imul(hash, 0x01000193);
+          hash >>>= 0;
+        }
+        return hash >>> 0;
+      }
+
+      function createSeededRng(seed) {
+        // LCG (Numerical Recipes) – deterministic pseudo-random [0, 1)
+        let state = (seed >>> 0) || 1;
+        return function rng() {
+          state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+          return (state & 0x7fffffff) / 0x80000000; // 0..1
+        };
+      }
+
+      function midiToFrequency(midi) {
+        return 440 * Math.pow(2, (midi - 69) / 12);
+      }
+
+      function isLikelyEmoji(cluster) {
+        // Heuristic using Unicode property; if unsupported, fall back to basic pictographic range.
+        try {
+          return /\p{Extended_Pictographic}/u.test(cluster);
+        } catch {
+          return /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(cluster);
+        }
+      }
+
+      function mapEmojiToNoteParams(cluster, globalIndex, tempoBpm) {
+        // Deterministic per-emoji randomization, with small globalIndex spice
+        const seed = (hashStringToSeed(cluster) ^ (globalIndex * 0x9e3779b9)) >>> 0;
+        const rng = createSeededRng(seed);
+
+        const scaleMidi = [0, 2, 4, 7, 9].map(s => 60 + s); // C major pentatonic, around middle C
+        const octaveBump = Math.floor(rng() * 4) - 1; // -1..2
+        const degree = scaleMidi[Math.floor(rng() * scaleMidi.length)];
+        const midi = clamp(degree + 12 * octaveBump, 36, 88);
+        const frequencyHz = midiToFrequency(midi);
+
+        const beat = 60 / clamp(tempoBpm || 120, 40, 220);
+        const baseDur = 0.18 + rng() * 0.55; // seconds
+        const durationSec = clamp(baseDur, 0.12, 0.9);
+        const gapSec = 0.03 + rng() * 0.12;
+
+        const gain = 0.12 + rng() * 0.18;
+        const attack = 0.01 + rng() * 0.04;
+        const release = 0.08 + rng() * 0.26;
+        const pan = (rng() * 2) - 1; // -1..1
+
+        const waveType = 'sine';
+
+        return { frequencyHz, durationSec, gapSec, gain, attack, release, pan, waveType };
+      }
+
+      function buildSequenceFromEmojis(emojiText, tempoBpm) {
+        const clusters = segmentGraphemes(emojiText).filter(c => c.trim().length > 0);
+        const notes = clusters.map((cluster, idx) => mapEmojiToNoteParams(cluster, idx, tempoBpm));
+        // Limit overly long sequences for safety
+        const MAX_NOTES = 64;
+        return notes.slice(0, MAX_NOTES);
+      }
+
+      // Audio engine
+      const audio = {
+        ctx: null,
+        masterGain: null,
+        currentNodes: [],
+        isPlaying: false,
+        sequence: [],
+        totalDuration: 0,
+      };
+
+      function ensureAudioContext() {
+        if (!audio.ctx) {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          audio.ctx = new Ctx({ latencyHint: 'interactive' });
+        }
+        if (!audio.masterGain) {
+          const g = audio.ctx.createGain();
+          g.gain.value = 0.85;
+          g.connect(audio.ctx.destination);
+          audio.masterGain = g;
+        }
+        return audio.ctx;
+      }
+
+      function stopPlayback() {
+        audio.currentNodes.forEach(node => {
+          try { node.stop(0); } catch (_) { /* ignore */ }
+          try { node.disconnect(); } catch (_) { /* ignore */ }
+        });
+        audio.currentNodes = [];
+        audio.isPlaying = false;
+      }
+
+      function schedulePlayback(sequence) {
+        const ctx = ensureAudioContext();
+        const now = ctx.currentTime + 0.02; // slight offset for stable scheduling
+        let t = now;
+        stopPlayback();
+        audio.isPlaying = true;
+        const masterGain = audio.masterGain;
+
+        let total = 0;
+        sequence.forEach((note, index) => {
+          const osc = ctx.createOscillator();
+          const env = ctx.createGain();
+          const pan = (ctx.createStereoPanner) ? ctx.createStereoPanner() : null;
+
+          osc.type = note.waveType;
+          osc.frequency.setValueAtTime(note.frequencyHz, t);
+
+          // Envelope
+          const start = t;
+          const attackEnd = start + note.attack;
+          const end = start + note.durationSec + note.release;
+          env.gain.setValueAtTime(0.0001, start);
+          env.gain.exponentialRampToValueAtTime(Math.max(0.0002, note.gain), clamp(attackEnd, start + 0.001, start + 0.3));
+          env.gain.exponentialRampToValueAtTime(0.0001, clamp(end, attackEnd + 0.02, start + 2.0));
+
+          if (pan) {
+            pan.pan.setValueAtTime(note.pan, start);
+            osc.connect(env);
+            env.connect(pan);
+            pan.connect(masterGain);
+          } else {
+            osc.connect(env);
+            env.connect(masterGain);
+          }
+
+          try { osc.start(start); } catch (_) { /* ignore */ }
+          try { osc.stop(end + 0.02); } catch (_) { /* ignore */ }
+
+          audio.currentNodes.push(osc);
+
+          const segment = note.durationSec + note.gapSec;
+          t += segment;
+          total += segment;
+        });
+
+        audio.totalDuration = total;
+        return { startTime: now, endTime: now + total };
+      }
+
+      // UI wiring
+      const emojiInput = document.getElementById('emojiInput');
+      const generateBtn = document.getElementById('generateBtn');
+      const playBtn = document.getElementById('playBtn');
+      const stopBtn = document.getElementById('stopBtn');
+      const testBtn = document.getElementById('testBtn');
+      const noteCount = document.getElementById('noteCount');
+      const statusText = document.getElementById('statusText');
+      const progressFill = document.getElementById('progressFill');
+      const volumeSlider = document.getElementById('volumeSlider');
+
+      function setStatus(text) { statusText.textContent = text; }
+      function setProgress(p) { progressFill.style.width = `${clamp(p, 0, 1) * 100}%`; }
+
+      function updateButtons() {
+        playBtn.disabled = audio.sequence.length === 0;
+        stopBtn.disabled = !audio.isPlaying;
+        noteCount.textContent = `${audio.sequence.length} note${audio.sequence.length === 1 ? '' : 's'}`;
+      }
+
+      function generate() {
+        const text = (emojiInput.value || '').trim();
+        if (!text) {
+          audio.sequence = [];
+          setStatus('Enter some emojis to generate');
+          updateButtons();
+          setProgress(0);
+          return;
+        }
+
+        const clusters = segmentGraphemes(text);
+        const emojisOnly = clusters.filter(c => c.trim().length > 0 && isLikelyEmoji(c));
+        const source = emojisOnly.length > 0 ? emojisOnly.join('') : clusters.join('');
+        const seq = buildSequenceFromEmojis(source, 120);
+        audio.sequence = seq;
+        setStatus(`Generated ${seq.length} tone${seq.length === 1 ? '' : 's'}`);
+        updateButtons();
+        setProgress(0);
+      }
+
+      generateBtn.addEventListener('click', () => {
+        generate();
+      });
+
+      playBtn.addEventListener('click', async () => {
+        if (audio.sequence.length === 0) return;
+        const ctx = ensureAudioContext();
+        if (ctx.state === 'suspended') await ctx.resume();
+        const { startTime, endTime } = schedulePlayback(audio.sequence);
+        updateButtons();
+        setStatus('Playing…');
+
+        const raf = () => {
+          if (!audio.isPlaying) return setProgress(0);
+          const now = ctx.currentTime;
+          const p = (now - startTime) / (endTime - startTime);
+          setProgress(p);
+          if (now < endTime) {
+            requestAnimationFrame(raf);
+          } else {
+            audio.isPlaying = false;
+            updateButtons();
+            setStatus('Done');
+            setProgress(1);
+            setTimeout(() => setProgress(0), 260);
+          }
+        };
+        requestAnimationFrame(raf);
+      });
+
+      stopBtn.addEventListener('click', () => {
+        stopPlayback();
+        updateButtons();
+        setStatus('Stopped');
+        setProgress(0);
+      });
+
+      testBtn.addEventListener('click', async () => {
+        const ctx = ensureAudioContext();
+        if (ctx.state === 'suspended') await ctx.resume();
+        stopPlayback();
+        setStatus('Test tone…');
+        const osc = ctx.createOscillator();
+        const env = ctx.createGain();
+        const start = ctx.currentTime + 0.02;
+        const dur = 0.5;
+        const end = start + dur;
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, start);
+        env.gain.setValueAtTime(0.0001, start);
+        env.gain.exponentialRampToValueAtTime(0.2, start + 0.03);
+        env.gain.exponentialRampToValueAtTime(0.0001, end);
+        osc.connect(env);
+        env.connect(audio.masterGain || ctx.destination);
+        osc.start(start);
+        osc.stop(end + 0.02);
+      });
+
+      volumeSlider.addEventListener('input', () => {
+        ensureAudioContext();
+        const value = parseInt(volumeSlider.value, 10) || 0;
+        const linear = value / 100;
+        const gain = Math.pow(linear, 1.6); // perceptual-ish taper
+        if (audio.masterGain) {
+          audio.masterGain.gain.setTargetAtTime(gain, audio.ctx.currentTime, 0.01);
+        }
+      });
+
+      // Generate on input change for convenience, but without auto-playing
+      emojiInput.addEventListener('change', generate);
+      emojiInput.addEventListener('keyup', (e) => { if (e.key === 'Enter') generate(); });
+
+      // Initial
+      setStatus('Idle');
+      updateButtons();
+    </script>
+  </body>
+  </html>
+
+
